@@ -1,5 +1,8 @@
-let add x y = x + y
+fun add x y = x + y;
 
-let main =
+// nothing here is ever normal
+val x = "normal";
+
+fun main =
     let a = add 3 4 in
-    a * 2
+    a * 2;
