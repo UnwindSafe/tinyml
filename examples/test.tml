@@ -1,0 +1,5 @@
+let add x y = x + y
+
+let main =
+    let a = add 3 4 in
+    a * 2
