@@ -1,6 +1,6 @@
 fun add x y = x + y;
 
-// nothing here is ever normal
+(* nothing here is ever normal *)
 val x = "normal";
 
 fun main =
