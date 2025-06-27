@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
+use log::error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum LexerError {
     #[error("Lexer pointer is out of bounds.")]
     OutOfBounds,
+    #[error("Lexing failed due to one or more errors.")]
+    LexingFailed,
 }
 
 type Result<T> = std::result::Result<T, LexerError>;
@@ -132,39 +135,84 @@ impl Lexer {
         false
     }
 
-    fn handle_number(&mut self) -> Lexeme {
-        println!("number");
-        unimplemented!()
-    }
-
-    fn handle_string(&mut self) -> Lexeme {
-        println!("string");
-        unimplemented!()
-    }
-
-    fn handle_comment(&mut self) {
-        println!("comment");
-        unimplemented!()
-    }
-
-    fn handle_identifier(&mut self) -> Result<Lexeme> {
+    fn handle_number(&mut self, base: usize) -> Lexeme {
         // set the base to the start of the identifier.
         self.base_pointer = self.pointer;
 
-        // keep consuming until we're done with the identifier.
-        while self.peek(None).is_alphanumeric() || self.peek(None) == '_' {
+        // advance until we reach the end of the number.
+        while self.peek(Some(0)).is_numeric() || self.peek(Some(0)) == '.' {
             self.pointer += 1;
         }
 
-        // this is the complete identifier.
-        let identifier = &self.text[self.base_pointer..=self.pointer];
+        // get the slice of the number.
+        let number = self.text[self.base_pointer..self.pointer].to_owned();
 
-        return Ok(Lexeme::IDENTIFIER(identifier.to_owned()));
+        if base == 10
+            && let Ok(number) = number.parse::<f64>()
+        {
+            return Lexeme::NUMBER(number);
+        }
+
+        // do not need to worry about decimals at this point.
+        if let Ok(number) = u64::from_str_radix(&number, base as _) {
+            return Lexeme::NUMBER(number as f64);
+        }
+
+        // if nothing was parsed correctly return error.
+        self.errored = true;
+        error!(
+            "invalid number (line: {}, col: {}): {}",
+            self.position.0, self.position.1, number
+        );
+
+        return Lexeme::UNDEFINED;
     }
 
-    pub fn scan(&mut self) -> Result<Vec<Token>> {
-        let mut tokens: Vec<Token> = Vec::new();
+    fn handle_string(&mut self) -> Lexeme {
+        // set the base to the start of the identifier.
+        self.base_pointer = self.pointer;
 
+        // advance after the first string initiator.
+        self.single_advance();
+
+        // keep consuming until we're done with the string.
+        while self.peek(Some(0)) != '"' {
+            // if there is a new line then report an error.
+            if self.peek(Some(0)) == '\n' {
+                // increase the line number and reset the column.
+                // self.position = (self.position.0 + 1, 1);
+            }
+            self.pointer += 1;
+        }
+
+        // take the string inbetween the double quotes.
+        let string = self.text[self.base_pointer + 1..self.pointer].to_owned();
+
+        // advance after the second string "initiator".
+        self.single_advance();
+
+        Lexeme::STRING(string)
+    }
+
+    fn handle_comment(&mut self) {
+        // set the base to the start of the identifier.
+        self.base_pointer = self.pointer;
+
+        // keep consuming until we've found the comment.
+        while !self.accept("*)") {
+            // we still need to keep track of the line number.
+            if self.peek(Some(0)) == '\n' {
+                // increase the line number and reset the column.
+                self.position = (self.position.0 + 1, 1);
+            }
+            self.pointer += 1;
+        }
+
+        // update the position to after the comment.
+        self.position.1 += (self.pointer - self.base_pointer) + 2;
+    }
+
+    fn handle_identifier(&mut self) -> Result<Lexeme> {
         let keywords = HashMap::from([
             ("not", Lexeme::NOT),
             ("andalso", Lexeme::AND),
@@ -182,21 +230,45 @@ impl Lexer {
             ("false", Lexeme::FALSE),
         ]);
 
+        // set the base to the start of the identifier.
+        self.base_pointer = self.pointer;
+
+        // keep consuming until we're done with the identifier.
+        while self.peek(None).is_alphanumeric() || self.peek(None) == '_' {
+            self.pointer += 1;
+        }
+
+        // this is the complete identifier.
+        let identifier = &self.text[self.base_pointer..=self.pointer];
+
+        // first make sure that it's not a keyword.
+        if let Some(kw) = keywords.get(identifier) {
+            return Ok(kw.clone());
+        }
+
+        return Ok(Lexeme::IDENTIFIER(identifier.to_owned()));
+    }
+
+    pub fn scan(&mut self) -> Result<Vec<Token>> {
+        let mut tokens: Vec<Token> = Vec::new();
+
         // while we are not at the end of the file.
         while self.pointer < self.text.len() as _ {
+            // update the state of the lexer if new line.
+            if self.current_char()? == '\n' {
+                // increase the line and reset the column.
+                self.position = (self.position.0 + 1, 0);
+                self.single_advance();
+                continue;
+            }
+
             // disregard whitespace.
             if self.current_char()?.is_whitespace() {
                 self.single_advance();
                 continue;
             }
 
-            // update the state of the lexer if new line.
-            if self.current_char()? == '\n' {
-                // increase the line and reset the column.
-                self.position = (self.position.0 + 1, 1);
-                continue;
-            }
-
+            // handles multiline comments.
             if self.accept("(*") {
                 self.handle_comment();
                 continue;
@@ -204,18 +276,56 @@ impl Lexer {
 
             // handle a string when we find an opening.
             if self.current_char()? == '"' {
-                self.handle_string();
+                let string = self.handle_string();
+
+                // fix the position from the advances.
+                self.position.1 -= 2;
+
+                tokens.push(Token {
+                    lexeme: string,
+                    span: Span::new(self.base_pointer, self.pointer),
+                    position: self.position,
+                });
+
+                // update the position to after string.
+                self.position.1 += self.pointer - self.base_pointer;
+
                 continue;
             }
 
             // if we encounter a number then we handle it as a number but this doesn't account for
-            // hexadecimal numbers and numbers that start like this: `.100`.
+            // numbers that start like this: `.100`.
             if self.current_char()?.is_numeric() {
-                self.handle_number();
+                // this determines if this takes extra chars, for backwards compat.
+                let mut extra_chars = 0;
+
+                // if this is a hexadecimal number.
+                let number = if self.accept("0x") {
+                    extra_chars = 2;
+                    self.handle_number(16)
+                // if this is a binary number.
+                } else if self.accept("0b") {
+                    extra_chars = 2;
+                    self.handle_number(2)
+                // if this is denary number.
+                } else {
+                    self.handle_number(10)
+                };
+
+                tokens.push(Token {
+                    lexeme: number,
+                    span: Span::new(self.base_pointer, self.pointer),
+                    position: self.position,
+                });
+
+                // update the position to after number.
+                self.position.1 += self.pointer - self.base_pointer + extra_chars;
+
                 continue;
             }
 
             if self.current_char()?.is_alphabetic() {
+                println!("ident found: {:?}", self.position);
                 // the raw lexeme identifier.
                 let identifier = self.handle_identifier()?;
 
@@ -256,6 +366,11 @@ impl Lexer {
                 '%' => Lexeme::MODULO,
                 _ => Lexeme::UNDEFINED,
             };
+
+            if lexeme == Lexeme::SEMICOLON {
+                println!("{:#?}", tokens);
+                unimplemented!();
+            }
 
             self.single_advance();
         }
