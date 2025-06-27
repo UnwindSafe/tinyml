@@ -249,6 +249,26 @@ impl Lexer {
         return Ok(Lexeme::IDENTIFIER(identifier.to_owned()));
     }
 
+    /// This will push a token to a list of tokens and modify the lexer state.
+    fn accept_multicharacter_token(
+        &mut self,
+        text: &str,
+        lexeme: Lexeme,
+        tokens: &mut Vec<Token>,
+    ) -> bool {
+        if self.accept(text) {
+            tokens.push(Token {
+                lexeme,
+                span: Span::new(self.pointer - text.len(), self.pointer - 1),
+                position: self.position,
+            });
+            // update the position to after symbol.
+            self.position.1 += text.len();
+            return true;
+        }
+        false
+    }
+
     pub fn scan(&mut self) -> Result<Vec<Token>> {
         let mut tokens: Vec<Token> = Vec::new();
 
@@ -347,6 +367,22 @@ impl Lexer {
                 continue;
             }
 
+            if self.accept_multicharacter_token(">=", Lexeme::GREATER_EQUAL, &mut tokens) {
+                continue;
+            }
+
+            if self.accept_multicharacter_token("<=", Lexeme::LESS_EQUAL, &mut tokens) {
+                continue;
+            }
+
+            if self.accept_multicharacter_token("==", Lexeme::EQ, &mut tokens) {
+                continue;
+            }
+
+            if self.accept_multicharacter_token("<>", Lexeme::NEQ, &mut tokens) {
+                continue;
+            }
+
             let lexeme = match self.current_char()? {
                 '+' => Lexeme::ADD,
                 '-' => Lexeme::SUBTRACT,
@@ -364,15 +400,33 @@ impl Lexer {
                 '{' => Lexeme::LEFT_BRACE,
                 '}' => Lexeme::RIGHT_BRACE,
                 '%' => Lexeme::MODULO,
+                '>' => Lexeme::GREATER_THAN,
+                '<' => Lexeme::LESS_THAN,
+                '=' => Lexeme::ASSIGN,
                 _ => Lexeme::UNDEFINED,
             };
 
-            if lexeme == Lexeme::SEMICOLON {
-                println!("{:#?}", tokens);
-                unimplemented!();
+            tokens.push(Token {
+                lexeme: lexeme.clone(),
+                span: Span::new(self.pointer, self.pointer),
+                position: self.position,
+            });
+
+            if lexeme == Lexeme::UNDEFINED {
+                self.errored = true;
+                error!(
+                    "invalid token (line: {}, col: {}): {}",
+                    self.position.0,
+                    self.position.1,
+                    self.current_char()?
+                );
             }
 
             self.single_advance();
+        }
+
+        if self.errored {
+            return Err(LexerError::LexingFailed);
         }
 
         Ok(tokens)
