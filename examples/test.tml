@@ -1,4 +1,4 @@
-fun add x y = if x >= 539.4.5 then x + y else x - y;
+fun add x y = if x >= 539 then x + y else x - y;
 
 (* 
   nothing here is ever normal 
