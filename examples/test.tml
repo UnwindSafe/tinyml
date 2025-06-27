@@ -1,7 +1,11 @@
-fun add x y = x + y;
+fun add x y = if x >= 539.4.5 then x + y else x - y;
 
-(* nothing here is ever normal *)
+(* 
+  nothing here is ever normal 
+*) 
 val x = "normal";
+
+
 
 fun main =
     let a = add 3 4 in
