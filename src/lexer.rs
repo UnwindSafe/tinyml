@@ -124,6 +124,10 @@ impl Lexer {
         self.pointer += 1;
     }
 
+    fn is_eof(&mut self) -> bool {
+        self.pointer == self.text.len()
+    }
+
     /// This will consume the lexer text.
     fn accept(&mut self, s: &str) -> bool {
         // get the slice that we could potentially match with.
@@ -178,9 +182,16 @@ impl Lexer {
         // keep consuming until we're done with the string.
         while self.peek(Some(0)) != '"' {
             // if there is a new line then report an error.
-            if self.peek(Some(0)) == '\n' {
+            if self.peek(Some(0)) == '\n' || self.is_eof() {
                 // increase the line number and reset the column.
                 // self.position = (self.position.0 + 1, 1);
+                self.errored = true;
+                error!(
+                    "unterminated string: line: {}, col: {}",
+                    self.position.0,
+                    self.position.1 - 1
+                );
+                return Lexeme::UNDEFINED;
             }
             self.pointer += 1;
         }
@@ -345,7 +356,6 @@ impl Lexer {
             }
 
             if self.current_char()?.is_alphabetic() {
-                println!("ident found: {:?}", self.position);
                 // the raw lexeme identifier.
                 let identifier = self.handle_identifier()?;
 
