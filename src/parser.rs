@@ -1,13 +1,23 @@
+use crate::lexer::{LexemeKind, Token};
 use log::error;
+use thiserror::Error;
 
-use crate::lexer::{Lexeme, LexemeKind, Token};
+#[derive(Error, Debug)]
+pub enum ParserError {
+    #[error("Error while parsing expression.")]
+    ExpressionError,
+    #[error("Parser pointer is out of bounds.")]
+    OutOfBounds,
+}
+
+type Result<T> = std::result::Result<T, ParserError>;
 
 #[derive(Debug)]
 pub enum Expr {
     Let {
         ident: Token,
-        eq_expr: Box<Expr>,
-        in_expr: Box<Expr>,
+        eq_: Box<Expr>,
+        in_: Box<Expr>,
     },
     Literal(Token),
 }
@@ -28,12 +38,15 @@ impl Parser {
     }
 
     /// Get the current token that is being pointed to.
-    fn current_token(&self) -> Option<Token> {
-        self.tokens.get(self.pointer).cloned()
+    fn current_token(&self) -> Result<Token> {
+        self.tokens
+            .get(self.pointer)
+            .cloned()
+            .ok_or(ParserError::OutOfBounds)
     }
 
     /// Increment the pointer then return the new current token.
-    fn advance(&mut self) -> Option<Token> {
+    fn advance(&mut self) -> Result<Token> {
         self.pointer += 1;
         self.current_token()
     }
@@ -47,7 +60,7 @@ impl Parser {
 
     /// Check to see if the next token matches the provided token.
     fn is_match(&self, lexeme: LexemeKind) -> bool {
-        if let Some(t) = self.peek(None) {
+        if let Some(t) = self.peek(Some(0)) {
             if t.lexeme.kind() == lexeme {
                 return true;
             }
@@ -58,7 +71,7 @@ impl Parser {
     // If matched consumes the target token.
     fn accept(&mut self, lexeme: LexemeKind) -> bool {
         if self.is_match(lexeme) {
-            self.advance();
+            let _ = self.advance();
             true
         } else {
             false
@@ -76,46 +89,72 @@ impl Parser {
     }
 
     /// Gets the token before the current token.
-    fn previous(&self) -> Option<Token> {
-        self.peek(Some(-1))
+    fn previous(&self) -> Result<Token> {
+        self.peek(Some(-1)).ok_or(ParserError::OutOfBounds)
     }
 
     // Must match and consume this token otherwise error.
-    fn expect(&mut self, lexeme: LexemeKind) -> Result<Token, ()> {
+    fn expect(&mut self, lexeme: LexemeKind) -> Result<Token> {
         if !self.accept(lexeme) {
             self.errored = true;
             error!(
-                "expected symbol: {:?}, found {:?}.",
+                "expected symbol: {:?}, found: {:?} (line {}:{})",
                 lexeme,
-                self.current_token(),
+                self.current_token()?.lexeme,
+                self.current_token()?.position.0,
+                self.current_token()?.position.1,
             );
-            return Err(());
+            return Err(ParserError::ExpressionError);
         }
 
-        Ok(self.previous().unwrap())
+        Ok(self.previous()?)
     }
 
-    fn expr(&mut self) -> Result<Expr, ()> {
+    // Consume tokens until parser is in a predictable state.
+    fn synchronize(&mut self) {
+        while !self.accept(LexemeKind::SEMICOLON) {
+            let _ = self.advance();
+        }
+    }
+
+    fn expr(&mut self) -> Result<Expr> {
+        println!("current token {:?}", self.current_token());
         // "let" <ident> "=" <expr> "in" <expr> "end".
         if self.accept(LexemeKind::LET) {
-            let ident = self.expect(LexemeKind::IDENTIFIER).unwrap();
-            self.expect(LexemeKind::EQ)?;
+            // get the identifier for the let epression.
+            let ident = self.expect(LexemeKind::IDENTIFIER)?;
+
+            self.expect(LexemeKind::ASSIGN)?;
+
+            // get the expression after the assignment operator.
             let eq_expr = self.expr()?;
+
             self.expect(LexemeKind::IN)?;
+
+            // get the expression after the in operator.
             let in_expr = self.expr()?;
+
             self.expect(LexemeKind::END)?;
 
             return Ok(Expr::Let {
                 ident,
-                eq_expr: Box::new(eq_expr),
-                in_expr: Box::new(in_expr),
+                eq_: Box::new(eq_expr),
+                in_: Box::new(in_expr),
             });
         }
 
-        Err(())
+        if self.accept(LexemeKind::NUMBER) {
+            return Ok(Expr::Literal(self.previous()?));
+        }
+
+        if self.accept(LexemeKind::IDENTIFIER) {
+            return Ok(Expr::Literal(self.previous()?));
+        }
+
+        Err(ParserError::ExpressionError)
     }
 
-    pub fn parse(&mut self) -> Expr {
-        self.expr().unwrap()
+    pub fn parse(&mut self) -> Result<Expr> {
+        Ok(self.expr()?)
     }
 }
