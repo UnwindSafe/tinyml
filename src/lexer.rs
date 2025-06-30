@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use kinded::Kinded;
 use log::error;
 use thiserror::Error;
 
@@ -14,7 +15,7 @@ pub enum LexerError {
 type Result<T> = std::result::Result<T, LexerError>;
 
 #[allow(non_camel_case_types)]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Kinded)]
 pub enum Lexeme {
     LEFT_PAREN,
     RIGHT_PAREN,
@@ -23,6 +24,8 @@ pub enum Lexeme {
     LEFT_BRACE,
     RIGHT_BRACE,
     VAL,
+    LET,
+    END,
     FUNCTION,
     FOR,
     IN,
@@ -73,10 +76,10 @@ impl Span {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Token {
-    lexeme: Lexeme,
-    span: Span,
+    pub lexeme: Lexeme,
+    pub span: Span,
     /// The line and column.
-    position: (usize, usize),
+    pub position: (usize, usize),
 }
 
 pub struct Lexer {
@@ -238,6 +241,7 @@ impl Lexer {
             ("mod", Lexeme::MODULO),
             ("in", Lexeme::IN),
             ("true", Lexeme::TRUE),
+            ("let", Lexeme::LET),
             ("false", Lexeme::FALSE),
         ]);
 
