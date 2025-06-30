@@ -229,6 +229,7 @@ impl Lexer {
     fn handle_identifier(&mut self) -> Result<Lexeme> {
         let keywords = HashMap::from([
             ("not", Lexeme::NOT),
+            ("end", Lexeme::END),
             ("andalso", Lexeme::AND),
             ("orelse", Lexeme::OR),
             ("while", Lexeme::WHILE),
