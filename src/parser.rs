@@ -13,6 +13,19 @@ pub enum ParserError {
 type Result<T> = std::result::Result<T, ParserError>;
 
 #[derive(Debug)]
+pub enum Decl {
+    Val {
+        ident: Token,
+        expr: Box<Expr>,
+    },
+    Function {
+        name: Token,
+        arguments: Vec<Token>,
+        body: Box<Expr>,
+    },
+}
+
+#[derive(Debug)]
 pub enum Expr {
     Let {
         ident: Token,
@@ -28,8 +41,15 @@ pub enum Expr {
         symbol: Token,
         rhs: Box<Expr>,
     },
+    If {
+        predicate: Box<Expr>,
+        then_: Box<Expr>,
+        else_: Box<Expr>,
+    },
     Literal(Token),
 }
+
+pub enum Statement {}
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -212,27 +232,24 @@ impl Parser {
     }
 
     fn primary(&mut self) -> Result<Expr> {
-        // "let" <ident> "=" <expr> "in" <expr> "end".
-        if self.accept(LexemeKind::LET) {
-            // get the identifier for the let epression.
-            let ident = self.expect(LexemeKind::IDENTIFIER)?;
+        if self.accept(LexemeKind::LEFT_PAREN) {
+            // parse the expression inside the parentheses.
+            let expr = self.expr()?;
+            self.expect(LexemeKind::RIGHT_PAREN)?;
+            return Ok(expr);
+        }
 
-            self.expect(LexemeKind::ASSIGN)?;
+        if self.accept(LexemeKind::IF) {
+            let predicate = self.expr()?;
+            self.expect(LexemeKind::THEN)?;
+            let then_ = self.expr()?;
+            self.expect(LexemeKind::ELSE)?;
+            let else_ = self.expr()?;
 
-            // get the expression after the assignment operator.
-            let eq_expr = self.expr()?;
-
-            self.expect(LexemeKind::IN)?;
-
-            // get the expression after the in operator.
-            let in_expr = self.expr()?;
-
-            self.expect(LexemeKind::END)?;
-
-            return Ok(Expr::Let {
-                ident,
-                eq_: Box::new(eq_expr),
-                in_: Box::new(in_expr),
+            return Ok(Expr::If {
+                predicate: Box::new(predicate),
+                then_: Box::new(then_),
+                else_: Box::new(else_),
             });
         }
 
@@ -260,7 +277,55 @@ impl Parser {
         Err(ParserError::ExpressionError)
     }
 
-    pub fn parse(&mut self) -> Result<Expr> {
-        Ok(self.expr()?)
+    pub fn decl(&mut self) -> Result<Option<Decl>> {
+        if self.accept(LexemeKind::VAL) {
+            let ident = self.expect(LexemeKind::IDENTIFIER)?;
+            self.expect(LexemeKind::ASSIGN)?;
+            let expr = self.expr()?;
+
+            return Ok(Some(Decl::Val {
+                ident,
+                expr: Box::new(expr),
+            }));
+        }
+
+        if self.accept(LexemeKind::FUNCTION) {
+            let ident = self.expect(LexemeKind::IDENTIFIER)?;
+
+            // a list of arguments that we have for the function.
+            let mut arguments: Vec<Token> = Vec::new();
+
+            if self.accept(LexemeKind::LEFT_PAREN) {
+                while let Some(token) = self.accept_lexemes([LexemeKind::IDENTIFIER]) {
+                    arguments.push(token);
+                    // optionally consume a comma if the user entered one.
+                    self.accept(LexemeKind::COMMA);
+                }
+                self.expect(LexemeKind::RIGHT_PAREN)?;
+            }
+
+            self.expect(LexemeKind::ASSIGN)?;
+
+            let body = self.expr()?;
+
+            return Ok(Some(Decl::Function {
+                name: ident,
+                arguments,
+                body: Box::new(body),
+            }));
+        }
+
+        Ok(None)
+    }
+
+    pub fn parse(&mut self) -> Result<Vec<Decl>> {
+        // a list of all the declarations.
+        let mut decls: Vec<Decl> = Vec::new();
+
+        while let Some(decl) = self.decl()? {
+            decls.push(decl);
+        }
+
+        Ok(decls)
     }
 }
