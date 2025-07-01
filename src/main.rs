@@ -14,7 +14,14 @@ fn main() {
 
     let tokens = Lexer::new(code).scan().unwrap();
 
-    let ast = parser::Parser::new(tokens);
+    // do nothing if there are no tokens.
+    if tokens.is_empty() {
+        return;
+    }
+
+    let ast = parser::Parser::new(tokens).parse();
+
+    println!("{:#?}", ast);
 
     println!("Hello, world!");
 }
