@@ -1,4 +1,4 @@
-use crate::lexer::{LexemeKind, Token};
+use crate::lexer::{Lexeme, LexemeKind, Span, Token};
 use log::error;
 use thiserror::Error;
 
@@ -19,6 +19,15 @@ pub enum Expr {
         eq_: Box<Expr>,
         in_: Box<Expr>,
     },
+    BinaryOp {
+        lhs: Box<Expr>,
+        symbol: Token,
+        rhs: Box<Expr>,
+    },
+    UnaryOp {
+        symbol: Token,
+        rhs: Box<Expr>,
+    },
     Literal(Token),
 }
 
@@ -29,7 +38,16 @@ pub struct Parser {
 }
 
 impl Parser {
-    pub fn new(tokens: Vec<Token>) -> Self {
+    pub fn new(mut tokens: Vec<Token>) -> Self {
+        let last_token = tokens.last().unwrap();
+
+        // append EOF token to the end of token list.
+        tokens.push(Token {
+            lexeme: Lexeme::EOF,
+            span: last_token.span.clone(),
+            position: last_token.position,
+        });
+
         Self {
             tokens,
             pointer: 0,
@@ -79,10 +97,10 @@ impl Parser {
     }
 
     /// Like `accept` but matches multiple tokens, returning the lexme it matched.
-    fn accept_lexemes(&mut self, lexemes: impl Iterator<Item = LexemeKind>) -> Option<LexemeKind> {
+    fn accept_lexemes(&mut self, lexemes: impl IntoIterator<Item = LexemeKind>) -> Option<Token> {
         for lexeme in lexemes {
             if self.accept(lexeme.clone()) {
-                return Some(lexeme);
+                return self.previous().ok();
             }
         }
         None
@@ -118,7 +136,82 @@ impl Parser {
     }
 
     fn expr(&mut self) -> Result<Expr> {
-        println!("current token {:?}", self.current_token());
+        self.equality()
+    }
+
+    fn equality(&mut self) -> Result<Expr> {
+        let mut expr = self.comparison()?;
+
+        while let Some(token) = self.accept_lexemes([LexemeKind::EQ, LexemeKind::NEQ]) {
+            expr = Expr::BinaryOp {
+                lhs: Box::new(expr),
+                symbol: token,
+                rhs: Box::new(self.comparison()?),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn comparison(&mut self) -> Result<Expr> {
+        let mut expr = self.term()?;
+
+        while let Some(token) = self.accept_lexemes([
+            LexemeKind::GREATER_THAN,
+            LexemeKind::GREATER_EQUAL,
+            LexemeKind::LESS_THAN,
+            LexemeKind::LESS_EQUAL,
+        ]) {
+            expr = Expr::BinaryOp {
+                lhs: Box::new(expr),
+                symbol: token,
+                rhs: Box::new(self.term()?),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn term(&mut self) -> Result<Expr> {
+        let mut expr = self.factor()?;
+
+        while let Some(token) = self.accept_lexemes([LexemeKind::ADD, LexemeKind::SUBTRACT]) {
+            expr = Expr::BinaryOp {
+                lhs: Box::new(expr),
+                symbol: token,
+                rhs: Box::new(self.factor()?),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn factor(&mut self) -> Result<Expr> {
+        let mut expr = self.unary()?;
+
+        while let Some(token) = self.accept_lexemes([LexemeKind::MULTIPLY, LexemeKind::DIVIDE]) {
+            expr = Expr::BinaryOp {
+                lhs: Box::new(expr),
+                symbol: token,
+                rhs: Box::new(self.unary()?),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn unary(&mut self) -> Result<Expr> {
+        while let Some(token) = self.accept_lexemes([LexemeKind::EXCLAMATION, LexemeKind::TILDE]) {
+            return Ok(Expr::UnaryOp {
+                symbol: token,
+                rhs: Box::new(self.unary()?),
+            });
+        }
+
+        Ok(self.primary()?)
+    }
+
+    fn primary(&mut self) -> Result<Expr> {
         // "let" <ident> "=" <expr> "in" <expr> "end".
         if self.accept(LexemeKind::LET) {
             // get the identifier for the let epression.
@@ -143,13 +236,26 @@ impl Parser {
             });
         }
 
-        if self.accept(LexemeKind::NUMBER) {
-            return Ok(Expr::Literal(self.previous()?));
+        // a list of accepted literals.
+        let literals = [
+            LexemeKind::NUMBER,
+            LexemeKind::STRING,
+            LexemeKind::TRUE,
+            LexemeKind::FALSE,
+            LexemeKind::IDENTIFIER,
+        ];
+
+        if let Some(token) = self.accept_lexemes(literals) {
+            return Ok(Expr::Literal(token));
         }
 
-        if self.accept(LexemeKind::IDENTIFIER) {
-            return Ok(Expr::Literal(self.previous()?));
-        }
+        error!(
+            "expected: LET, {:?}, found: {:?} (line {}:{})",
+            literals,
+            self.current_token()?.lexeme,
+            self.current_token()?.position.0,
+            self.current_token()?.position.1
+        );
 
         Err(ParserError::ExpressionError)
     }
