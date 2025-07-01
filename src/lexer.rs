@@ -58,7 +58,10 @@ pub enum Lexeme {
     DOT,
     COMMA,
     COLON,
+    TILDE,
+    EXCLAMATION,
     UNDEFINED,
+    EOF,
 }
 
 /// This is the span of the lexeme in the text.
@@ -418,6 +421,8 @@ impl Lexer {
                 '>' => Lexeme::GREATER_THAN,
                 '<' => Lexeme::LESS_THAN,
                 '=' => Lexeme::ASSIGN,
+                '!' => Lexeme::EXCLAMATION,
+                '~' => Lexeme::TILDE,
                 _ => Lexeme::UNDEFINED,
             };
 
