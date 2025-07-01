@@ -363,7 +363,7 @@ impl Lexer {
                 continue;
             }
 
-            if self.current_char()?.is_alphabetic() {
+            if self.current_char()?.is_alphabetic() || self.current_char()? == '_' {
                 // the raw lexeme identifier.
                 let identifier = self.handle_identifier()?;
 
