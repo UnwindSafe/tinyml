@@ -1,5 +1,6 @@
 use lexer::Lexer;
 
+mod analysis;
 mod lexer;
 mod parser;
 
@@ -20,8 +21,6 @@ fn main() {
     }
 
     let ast = parser::Parser::new(tokens).parse();
-
-    println!("{:#?}", ast);
 
     println!("Hello, world!");
 }
