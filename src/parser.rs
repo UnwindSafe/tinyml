@@ -1,4 +1,7 @@
-use crate::lexer::{Lexeme, LexemeKind, Span, Token};
+use crate::{
+    analysis,
+    lexer::{Lexeme, LexemeKind, Span, Token},
+};
 use log::error;
 use thiserror::Error;
 
@@ -12,8 +15,38 @@ pub enum ParserError {
 
 type Result<T> = std::result::Result<T, ParserError>;
 
+pub trait AstVisitor {
+    type Result;
+
+    // methods for declarations.
+    fn visit_decl_val(&mut self, ident: &Token, expr: &mut Expr) -> Self::Result;
+    fn visit_decl_function(
+        &mut self,
+        name: &Token,
+        arguments: &[Token],
+        body: &mut Expr,
+    ) -> Self::Result;
+
+    // methods for expressions.
+    fn visit_expr_let(&mut self, ident: &Token, eq: &mut Expr, in_: &mut Expr) -> Self::Result;
+    fn visit_expr_binary_op(
+        &mut self,
+        lhs: &mut Expr,
+        symbol: &Token,
+        rhs: &mut Expr,
+    ) -> Self::Result;
+    fn visit_expr_unary_op(&mut self, symbol: &Token, rhs: &mut Expr) -> Self::Result;
+    fn visit_expr_if(
+        &mut self,
+        predicate: &mut Expr,
+        then: &mut Expr,
+        else_: &mut Expr,
+    ) -> Self::Result;
+    fn visit_expr_literal(&mut self, token: &Token) -> Self::Result;
+}
+
 #[derive(Debug)]
-pub enum Decl {
+pub enum DeclKind {
     Val {
         ident: Token,
         expr: Box<Expr>,
@@ -26,7 +59,30 @@ pub enum Decl {
 }
 
 #[derive(Debug)]
-pub enum Expr {
+pub struct Decl {
+    kind: DeclKind,
+    ty: Option<analysis::Type>,
+}
+
+impl Decl {
+    fn new(kind: DeclKind) -> Self {
+        Self { kind, ty: None }
+    }
+
+    pub fn accept<V: AstVisitor>(&mut self, visitor: &mut V) -> V::Result {
+        match &mut self.kind {
+            DeclKind::Val { ident, expr } => visitor.visit_decl_val(ident, expr),
+            DeclKind::Function {
+                name,
+                arguments,
+                body,
+            } => visitor.visit_decl_function(name, arguments, body),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ExprKind {
     Let {
         ident: Token,
         eq_: Box<Expr>,
@@ -49,7 +105,33 @@ pub enum Expr {
     Literal(Token),
 }
 
-pub enum Statement {}
+#[derive(Debug)]
+pub struct Expr {
+    kind: ExprKind,
+    ty: Option<analysis::Type>,
+}
+
+impl Expr {
+    fn new(kind: ExprKind) -> Self {
+        Self { kind, ty: None }
+    }
+
+    pub fn accept<V: AstVisitor>(&mut self, visitor: &mut V) -> V::Result {
+        match &mut self.kind {
+            ExprKind::If {
+                predicate,
+                then_,
+                else_,
+            } => visitor.visit_expr_if(predicate, then_, else_),
+            ExprKind::Let { ident, eq_, in_ } => visitor.visit_expr_let(ident, eq_, in_),
+            ExprKind::BinaryOp { lhs, symbol, rhs } => {
+                visitor.visit_expr_binary_op(lhs, symbol, rhs)
+            }
+            ExprKind::UnaryOp { symbol, rhs } => visitor.visit_expr_unary_op(symbol, rhs),
+            ExprKind::Literal(token) => visitor.visit_expr_literal(token),
+        }
+    }
+}
 
 pub struct Parser {
     tokens: Vec<Token>,
@@ -163,11 +245,11 @@ impl Parser {
         let mut expr = self.comparison()?;
 
         while let Some(token) = self.accept_lexemes([LexemeKind::EQ, LexemeKind::NEQ]) {
-            expr = Expr::BinaryOp {
+            expr = Expr::new(ExprKind::BinaryOp {
                 lhs: Box::new(expr),
                 symbol: token,
                 rhs: Box::new(self.comparison()?),
-            };
+            });
         }
 
         Ok(expr)
@@ -182,11 +264,11 @@ impl Parser {
             LexemeKind::LESS_THAN,
             LexemeKind::LESS_EQUAL,
         ]) {
-            expr = Expr::BinaryOp {
+            expr = Expr::new(ExprKind::BinaryOp {
                 lhs: Box::new(expr),
                 symbol: token,
                 rhs: Box::new(self.term()?),
-            };
+            });
         }
 
         Ok(expr)
@@ -196,11 +278,11 @@ impl Parser {
         let mut expr = self.factor()?;
 
         while let Some(token) = self.accept_lexemes([LexemeKind::ADD, LexemeKind::SUBTRACT]) {
-            expr = Expr::BinaryOp {
+            expr = Expr::new(ExprKind::BinaryOp {
                 lhs: Box::new(expr),
                 symbol: token,
                 rhs: Box::new(self.factor()?),
-            };
+            });
         }
 
         Ok(expr)
@@ -210,11 +292,11 @@ impl Parser {
         let mut expr = self.unary()?;
 
         while let Some(token) = self.accept_lexemes([LexemeKind::MULTIPLY, LexemeKind::DIVIDE]) {
-            expr = Expr::BinaryOp {
+            expr = Expr::new(ExprKind::BinaryOp {
                 lhs: Box::new(expr),
                 symbol: token,
                 rhs: Box::new(self.unary()?),
-            };
+            });
         }
 
         Ok(expr)
@@ -222,10 +304,10 @@ impl Parser {
 
     fn unary(&mut self) -> Result<Expr> {
         while let Some(token) = self.accept_lexemes([LexemeKind::EXCLAMATION, LexemeKind::TILDE]) {
-            return Ok(Expr::UnaryOp {
+            return Ok(Expr::new(ExprKind::UnaryOp {
                 symbol: token,
                 rhs: Box::new(self.unary()?),
-            });
+            }));
         }
 
         Ok(self.primary()?)
@@ -246,11 +328,11 @@ impl Parser {
             self.expect(LexemeKind::ELSE)?;
             let else_ = self.expr()?;
 
-            return Ok(Expr::If {
+            return Ok(Expr::new(ExprKind::If {
                 predicate: Box::new(predicate),
                 then_: Box::new(then_),
                 else_: Box::new(else_),
-            });
+            }));
         }
 
         // a list of accepted literals.
@@ -263,7 +345,7 @@ impl Parser {
         ];
 
         if let Some(token) = self.accept_lexemes(literals) {
-            return Ok(Expr::Literal(token));
+            return Ok(Expr::new(ExprKind::Literal(token)));
         }
 
         error!(
@@ -283,10 +365,10 @@ impl Parser {
             self.expect(LexemeKind::ASSIGN)?;
             let expr = self.expr()?;
 
-            return Ok(Some(Decl::Val {
+            return Ok(Some(Decl::new(DeclKind::Val {
                 ident,
                 expr: Box::new(expr),
-            }));
+            })));
         }
 
         if self.accept(LexemeKind::FUNCTION) {
@@ -308,11 +390,11 @@ impl Parser {
 
             let body = self.expr()?;
 
-            return Ok(Some(Decl::Function {
+            return Ok(Some(Decl::new(DeclKind::Function {
                 name: ident,
                 arguments,
                 body: Box::new(body),
-            }));
+            })));
         }
 
         Ok(None)
