@@ -1,3 +1,4 @@
+use analysis::run_passes;
 use lexer::Lexer;
 
 mod analysis;
@@ -20,7 +21,9 @@ fn main() {
         return;
     }
 
-    let ast = parser::Parser::new(tokens).parse();
+    let mut ast = parser::Parser::new(tokens).parse().unwrap();
 
-    println!("Hello, world!");
+    run_passes(&mut ast);
+
+    println!("Hello, world!: {:#?}", ast);
 }
